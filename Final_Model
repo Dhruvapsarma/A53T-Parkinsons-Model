@@ -1,0 +1,214 @@
+#Final Model
+
+!pip install py3Dmol==2.0.4 biopython==1.83 >/dev/null
+
+import numpy as np, matplotlib.pyplot as plt, os, json, pandas as pd
+from scipy import signal
+import py3Dmol
+from IPython.display import display
+
+np.random.seed(42)
+os.makedirs("figures", exist_ok=True)
+os.makedirs("data", exist_ok=True)
+
+# Parameter configuration (can be moved to params.json)
+params = {
+    "beta_sheet_increase": 0.25,
+    "aggregation_rate": 3.2,
+    "membrane_affinity": 1.8,
+    "proteasome_inhibition": 0.4,
+    "dopamine_reduction": 0.7,
+    "mitochondrial_dysfunction": 0.6,
+    "oxidative_stress": 0.8,
+    "calcium_dysregulation": 0.5,
+    "n_neurons": 200,
+    "duration": 2.0,
+    "fs": 1000
+}
+
+# Atomic scale (real structure)
+def display_structure(resi=53):
+    viewer = py3Dmol.view(width=800, height=400)
+    viewer.fetch('2N0A')
+    viewer.setStyle({'cartoon': {'color': 'spectrum'}})
+    viewer.addLabel(f"A53T site: residue {resi}",
+                    {'resi': resi},
+                    {'backgroundColor': 'red', 'fontColor': 'white'})
+    viewer.zoomTo({'resi': resi})
+    display(viewer)
+
+# Molecular scale
+def analyze_molecular_impact(p=params):
+    return {k: p[k] for k in ["beta_sheet_increase","aggregation_rate",
+                              "membrane_affinity","proteasome_inhibition"]}
+
+# Cellular scale
+def model_cellular_impact(p=params):
+    eff = {k: p[k] for k in ["dopamine_reduction","mitochondrial_dysfunction",
+                             "oxidative_stress","calcium_dysregulation"]}
+    eff["overall_stress"] = np.mean(list(eff.values()))
+    return eff
+
+# Circuit simulator
+class MultiScaleCircuitSimulator:
+    def __init__(self, cell, p=params):
+        self.p=p; self.cell=cell
+        self.n=p["n_neurons"]; self.T=p["duration"]; self.fs=p["fs"]
+        self.time=np.linspace(0,self.T,int(self.fs*self.T))
+        self.severity=cell["overall_stress"]
+        self.n_diseased=int(self.n*(0.5+0.3*self.severity))
+    def _healthy(self,rate):
+        n_h=self.n-self.n_diseased
+        return np.random.gamma(2,rate/2,(len(self.time),n_h))+np.random.poisson(1,(len(self.time),n_h))
+    def _diseased(self,rate):
+        n_d=self.n_diseased
+        beta_strength=0.3*self.severity
+        freqs=np.random.uniform(20,25,n_d)
+        rates=np.random.gamma(1,rate,(len(self.time),n_d))
+        osc=np.sin(2*np.pi*freqs[:,None]*self.time).T*beta_strength
+        return rates*(1+osc)+np.random.poisson(0.5,(len(self.time),n_d))
+    def simulate(self):
+        h_rate=10; d_rate=h_rate*(1-self.cell["dopamine_reduction"])
+        h=self._healthy(h_rate); d=self._diseased(d_rate)
+        return {"all_activity":np.hstack([d,h]),
+                "healthy_pop":np.mean(h,axis=1),
+                "diseased_pop":np.mean(d,axis=1),
+                "time":self.time}
+
+# Symptom correlation
+def correlate_with_symptoms(res):
+    dr,hr=np.mean(res["diseased_pop"]),np.mean(res["healthy_pop"])
+    rate_red=(1-dr/hr)*100
+    freqs,psd=signal.welch(res["diseased_pop"],fs=params["fs"],nperseg=256)
+    beta=np.mean(psd[(freqs>=13)&(freqs<=30)])
+    sym={"bradykinesia":rate_red/100,
+         "tremor":beta*1000,
+         "rigidity":(rate_red*beta*10)/100,
+         "overall":(rate_red+beta*1000)/200}
+    return sym,rate_red,beta
+
+# Validation and sensitivity
+def validate_against_reference(dr):
+    diff=abs(dr-3.5)/3.5*100
+    print(f"Validation vs ref (3.5 Hz PD): {diff:.1f}% deviation"); return diff
+def sensitivity_test(param,base=params):
+    deltas=[0.9,1,1.1]; vals=[]
+    for s in deltas:
+        p=base.copy(); p[param]*=s
+        c=model_cellular_impact(p); sim=MultiScaleCircuitSimulator(c,p).simulate()
+        _,r,_=correlate_with_symptoms(sim); vals.append(r)
+    plt.figure(figsize=(5,3))
+    plt.plot([d*100 for d in deltas],vals,'o-',lw=2)
+    plt.title(f"Sensitivity of {param}"); plt.xlabel('% of base'); plt.ylabel('Rate-reduction (%)')
+    plt.grid(True,alpha=0.3)
+    plt.savefig(f"figures/sensitivity_{param}.png",dpi=300,bbox_inches='tight')
+    plt.show()
+
+# Extended visuals (9-panel suite)
+def extra_visualizations(mol,cell,sim,rate_red,beta):
+    print("Generating full multi-panel suite…")
+    fig,ax=plt.subplots(3,3,figsize=(18,14))
+
+    # Create a simulator instance for accessing its properties
+    # The 'cell' and 'params' are available in this scope.
+    local_simulator_instance = MultiScaleCircuitSimulator(cell, params)
+
+    # 1 Molecular→Cellular
+    mk,ck=list(mol.keys()),list(cell.keys())[:-1]
+    mv=[mol[k] for k in mk]; cv=[cell[k] for k in ck]
+    x=np.arange(len(mk))
+    ax[0,0].bar(x-0.2,mv,width=0.4,label='Molecular',color='orange')
+    ax[0,0].bar(x+0.2,cv,width=0.4,label='Cellular',color='green')
+    ax[0,0].set_xticks(x); ax[0,0].set_xticklabels(['β-sheet','Aggregation','Membrane','Proteasome'])
+    ax[0,0].legend(); ax[0,0].set_title('Molecular→Cellular Translation',fontweight='bold'); ax[0,0].grid(True,alpha=0.3)
+
+    # 2 Cellular stress
+    keys=list(cell.keys())[:-1]; vals=[cell[k] for k in keys]
+    ax[0,1].bar(keys,vals,color='red',alpha=0.7); ax[0,1].set_title('Cellular Stress Profile',fontweight='bold'); ax[0,1].grid(True,alpha=0.3)
+
+    # 3 Raster plot
+
+    plt.subplot(3, 3, 3)
+    subset_neurons = np.random.choice(local_simulator_instance.n, size=80, replace=False)
+    activity_subset = sim['all_activity'][:, subset_neurons]
+    spike_threshold = np.percentile(activity_subset, 95, axis=0)
+    spike_thresholds = spike_threshold.reshape(1, -1)
+    spikes_binary = activity_subset > spike_thresholds
+    for i, neuron_idx in enumerate(subset_neurons):
+        spike_times = sim['time'][spikes_binary[:, i]]
+        plt.scatter(spike_times, np.ones_like(spike_times) * i,
+                    s=3, c='black', alpha=0.6)
+    n_diseased_display = int(len(subset_neurons) * (local_simulator_instance.n_diseased / local_simulator_instance.n))
+    plt.axhspan(-0.5, n_diseased_display-0.5, color='red', alpha=0.15, label='Diseased')
+    plt.axhspan(n_diseased_display-0.5, len(subset_neurons)-0.5, color='green', alpha=0.1, label='Healthy')
+    plt.title('Raster: Striatal Circuit\n(Firing Events)', fontweight='bold')
+    plt.xlabel('Time (s)', fontweight='bold')
+    plt.ylabel('Neuron Index', fontweight='bold')
+    plt.xlim(0, 2)
+    plt.ylim(-1, len(subset_neurons))
+    plt.grid(False)
+    plt.legend(loc='upper right', frameon=True, fontsize=8)
+
+    # 4 Population activity
+    ax[1,0].plot(sim['time'],sim['healthy_pop'],'g',label='Healthy')
+    ax[1,0].plot(sim['time'],sim['diseased_pop'],'r',label='Diseased')
+    ax[1,0].legend(); ax[1,0].grid(True,alpha=0.3)
+    ax[1,0].set_title(f'Population Activity\nRate Reduction {rate_red:.1f}%',fontweight='bold')
+
+    # 5 Power spectrum
+    freqs,psd=signal.welch(sim['diseased_pop'],fs=params["fs"],nperseg=256)
+    ax[1,1].plot(freqs,psd,'r',lw=2); ax[1,1].axvspan(13,30,color='red',alpha=0.3)
+    ax[1,1].set_xlim(0,50); ax[1,1].grid(True,alpha=0.3)
+    ax[1,1].set_title('Power Spectrum (β-Oscillations)',fontweight='bold')
+
+    # 6 Clinical symptoms
+    sym,_,_=correlate_with_symptoms(sim)
+    ax[1,2].bar(sym.keys(),sym.values(),color='purple',alpha=0.8)
+    ax[1,2].set_title('Clinical Symptom Scores',fontweight='bold'); ax[1,2].grid(True,alpha=0.3)
+
+    # 7 Parameter summary
+    ax[2,0].axis('off')
+    metrics={"Dopamine ↓":f"{cell['dopamine_reduction']*100:.0f}%",
+             "Diseased neurons":f"{local_simulator_instance.n_diseased}",
+             "Rate ↓":f"{rate_red:.1f}%",
+             "β-Power":f"{beta*1000:.3f}"}
+    for i,(k,v) in enumerate(metrics.items()):
+        ax[2,0].text(0.5,0.8-i*0.2,f"{k}: {v}",ha='center',
+                     bbox=dict(boxstyle="round,pad=0.4",facecolor='lightblue',alpha=0.8),
+                     transform=ax[2,0].transAxes,fontweight='bold')
+
+    # 8 Cross-scale cascade
+    cascade=[1.0,mol['beta_sheet_increase'],cell['overall_stress'],rate_red/100,(rate_red+beta*1000)/200]
+    labels=['Atomic','Molecular','Cellular','Circuit','System']
+    bars=ax[2,1].bar(labels,cascade,color=['#1f77b4','#ff7f0e','#2ca02c','#d62728','#9467bd'])
+    for b,v in zip(bars,cascade): ax[2,1].text(b.get_x()+b.get_width()/2,v+0.02,f"{v:.2f}",ha='center')
+    ax[2,1].set_title('Cross-Scale Cascade',fontweight='bold'); ax[2,1].grid(True,alpha=0.3)
+
+    # 9 Therapeutic targets
+    targets=['Structure Stabilizers','Aggregation Inhibitors','Dopamine Therapies','β-Oscillation Suppressors']
+    eff=[0.8,0.6,0.9,0.7]
+    bars=ax[2,2].bar(targets,eff,color=['#ff9999','#66b3ff','#99ff99','#ffcc99'])
+    for b,v in zip(bars,eff): ax[2,2].text(b.get_x()+b.get_width()/2,v+0.02,f"{v:.1f}",ha='center')
+    ax[2,2].set_ylim(0,1); ax[2,2].set_title('Therapeutic Effectiveness Across Scales',fontweight='bold')
+    ax[2,2].grid(True,alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig("figures/full_multiscale_suite.png",dpi=300,bbox_inches='tight')
+    plt.show()
+    print(" full_multiscale_suite.png saved.")
+
+# --- Master pipeline
+def main():
+    print("Launching unified multi-scale pipeline…")
+    display_structure()
+    mol=analyze_molecular_impact(); cell=model_cellular_impact()
+    sim=MultiScaleCircuitSimulator(cell).simulate()
+    sym,rate,beta=correlate_with_symptoms(sim)
+    validate_against_reference(np.mean(sim['diseased_pop']))
+    extra_visualizations(mol,cell,sim,rate,beta)
+    sensitivity_test('dopamine_reduction')
+    pd.DataFrame([{**sym,**cell,**mol,"RateReduction":rate,"BetaPower":beta}]).to_csv("data/results_summary.csv",index=False)
+    print(" All analyses and figures saved in /figures and /data")
+
+if __name__=="__main__":
+    main()
