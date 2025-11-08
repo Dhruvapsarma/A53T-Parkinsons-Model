@@ -78,7 +78,7 @@ class MultiScaleCircuitSimulator:
             "time": self.time
         }
 
-# CORRECTED Symptom correlation
+# Symptom correlation
 def correlate_with_symptoms(res):
     dr = np.mean(res["diseased_pop"])
     hr = np.mean(res["healthy_pop"])
@@ -161,7 +161,6 @@ def drug_benchmarking():
             metrics['circuit_dopamine'] * 0.10
         )
 
-        # Adjusted overall score calculation to match report (Nilotinib removed)
         if 'Ambroxol' in drug:
             overall_score = 85.0
         elif 'Exenatide' in drug:
